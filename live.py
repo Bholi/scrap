@@ -1,77 +1,112 @@
 import requests
-import warnings
+import os
+import pandas as pd
+import json
+from colorama import Fore,Style,Back,init
 from bs4 import BeautifulSoup
-import csv
 import time
 
-# Suppress SSL verification warnings for testing purposes
-warnings.filterwarnings('ignore', category=requests.exceptions.InsecureRequestWarning)
+url = "http://www.nepalstock.com/main/todays_price/index/"
 
-def get_with_retries(url, retries=3, delay=5):
-    for attempt in range(retries):
-        try:
-            # Send an HTTP GET request to the URL, disable SSL verification for testing
-            response = requests.get(url, verify=False, timeout=10)
-            response.raise_for_status()  # Raise an exception for HTTP errors
-            return response
-        except requests.exceptions.RequestException as e:
-            print(f"Attempt {attempt + 1} failed: {e}")
-            if attempt < retries - 1:
-                print(f"Retrying in {delay} seconds...")
-                time.sleep(delay)
+init(autoreset=True)
+
+titles=[]
+SN=[]
+traded_comp=[]
+no_of_trans=[]
+max_price=[]
+min_price=[]
+closing_price=[]
+traded_shares=[]
+amount=[]
+prev_closing=[]
+difference=[]  
+
+
+def pd_columns() -> list:
+
+    for firstpage in range(1):
+        res=requests.get(f"{url}{firstpage+1}").text
+        souped_data=BeautifulSoup(res,'html5lib')
+        main_table=souped_data.findAll('table',attrs={'class':'table table-condensed table-hover'})[0]
+        #print(main_table)
+        for tds in main_table.find_all('tr',{'class':'unique'}):
+            for td in (tds.find_all("td")):
+                titles.append(td.getText())
+                #print(td.getText())
+    headers=list(filter(lambda x: x!="S.N.",titles))
+    return headers
+
+
+def scrap():
+
+    with open('metadata.json','r') as metadata:
+        jsondata=json.loads(metadata.read())
+    name=jsondata["name"]
+    author=jsondata["author"]
+    linkedin=jsondata["linkedin"]
+    infos=[name,author,linkedin]
+    count=0
+    for cred in jsondata:
+        print(f'{Style.BRIGHT}{cred}: {Fore.YELLOW}{infos[count]}{Fore.RESET}')
+        count+=1
+    time.sleep(1)
+    for page_indexing in range(12):
+        to_skip=0
+        vals=[]
+        res=requests.get(f'{url}{page_indexing+1}').content.decode('utf-8')
+        souped_data=BeautifulSoup(res,'html.parser')
+        main_table=souped_data.find_all('table',{'class':'table table-condensed table-hover'})[0]
+        for trs in main_table.find_all('tr'):
+            if to_skip<2:
+                to_skip+=1
+                continue
             else:
-                print("All attempts failed.")
-                return None
+                try:
+                    vals=trs.find_all('td')
+                    #SN.append(vals[0].getText())
+                    traded_comp.append(vals[1].getText())
+                    print(f'{Fore.GREEN}{Style.BRIGHT}[-]  {Fore.WHITE}{Style.BRIGHT}{vals[1].getText()}')
+                    no_of_trans.append(vals[2].getText())
+                    max_price.append(vals[3].getText())
+                    min_price.append(vals[4].getText())
+                    closing_price.append(vals[5].getText())
+                    traded_shares.append(vals[6].getText())
+                    amount.append(vals[7].getText())
+                    prev_closing.append(vals[8].getText())
+                    difference.append(vals[9].getText())
+                except IndexError:
+                    break
 
-def scrape_nepalstock_floor_sheet(url):
-    try:
-        # Get the webpage with retries
-        response = get_with_retries(url)
-        if not response:
-            print("Failed to fetch the URL after retries.")
-            return None
-        
-        # Parse the webpage content
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Find the specific table by class
-        table = soup.find('table', class_='table table__lg table-striped table__border table__border--bottom')
-        if not table:
-            print("Table not found on the page.")
-            return None
-        
-        # Extract headers from the table
-        headers = [th.text.strip() for th in table.find('thead').find_all('th')]
-        print("Headers:", headers)
-        
-        # Extract rows from the table
-        rows = []
-        tbody = table.find('tbody')
-        for tr in tbody.find_all('tr'):
-            row_data = [td.text.strip() for td in tr.find_all('td')]
-            if row_data:  # Only add non-empty rows
-                rows.append(row_data)
-        
-        if not rows:
-            print("No rows found in the table.")
-            return None
-        
-        # Save the data to a CSV file
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f'nepal_stock_floor_sheet_{timestamp}.csv'
-        
-        with open(filename, 'w', newline='', encoding='utf-8') as file:
-            writer = csv.writer(file)
-            writer.writerow(headers)  # Write headers
-            writer.writerows(rows)  # Write data rows
-        
-        print(f"Data successfully scraped and saved to '{filename}'.")
-        return filename
+def createCSV(file_name:str):
+
+    titles=pd_columns()
+    df=pd.DataFrame(columns=titles)
+    df["Traded Companies"]=traded_comp
+    df["No. Of Transaction"]=no_of_trans
+    df["Max Price"]=max_price
+    df["Min Price"]=min_price
+    df["Closing Price"]=closing_price
+    df["Traded Shares"]=traded_shares
+    df["Amount"]=amount
+    df["Previous Closing"]=prev_closing
+    df["Difference Rs."]=difference
+    decode_unicode=df['Difference Rs.'].str.split().str.join(' ')
+    df["Difference Rs."]=decode_unicode
+    df.drop(df.filter(regex="Unname"),axis=1, inplace=True)
+    df.to_csv(f"{file_name}.csv",index=False)
+    print(f" saved your file under {Fore.RED}{Style.BRIGHT}{file_name}.csv ")
+
+
+if  __name__=="__main__":
+
+    scrap()
+    yes_or_no=input("Do you want to save your file (y/n):  ")
     
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-        return None
-
-if __name__ == "__main__":
-    url = "https://nepalstock.com/floor-sheet"
-    scrape_nepalstock_floor_sheet(url)
+    if yes_or_no.lower()=="y":
+        file_name=input("Enter your file name: ")
+        createCSV(file_name)
+           
+    else:
+        print("Okay exiting...")
+        exit()
