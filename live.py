@@ -5,8 +5,8 @@ import time
 
 def scrape_nepalstock_floor_sheet(url):
     try:
-        # Send an HTTP GET request to the URL
-        response = requests.get(url, timeout=10)
+        # Send an HTTP GET request to the URL, disable SSL verification for debugging
+        response = requests.get(url, verify=False, timeout=10)
         response.raise_for_status()  # Raise an exception for HTTP errors
         
         # Parse the webpage content
