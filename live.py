@@ -4,6 +4,10 @@ import csv
 import time
 import os
 from datetime import datetime
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+
+# Suppress only the single warning from urllib3 needed.
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 def scrape_nepse_data(max_retries=3):
     headers = {
@@ -20,9 +24,9 @@ def scrape_nepse_data(max_retries=3):
         try:
             print(f"\nAttempt {attempt + 1} of {max_retries}")
             
-            # Make the request
-            response = requests.get(url, headers=headers, timeout=30)
-            response.raise_for_status()  # Raise an exception for bad status codes
+            # Make the request with SSL verification disabled
+            response = requests.get(url, headers=headers, timeout=30, verify=False)
+            response.raise_for_status()
             
             print(f"Successfully fetched the page. Status code: {response.status_code}")
             
@@ -45,10 +49,11 @@ def scrape_nepse_data(max_retries=3):
             
             if not table:
                 print("Table not found in the HTML")
-                print("Available tables:")
-                all_tables = soup.find_all('table')
-                for idx, t in enumerate(all_tables):
-                    print(f"Table {idx + 1} classes: {t.get('class', 'No class')}")
+                # Save HTML for debugging
+                debug_file = f'debug_page_{datetime.now().strftime("%Y%m%d_%H%M%S")}.html'
+                with open(debug_file, 'w', encoding='utf-8') as f:
+                    f.write(response.text)
+                print(f"Saved HTML content to {debug_file} for debugging")
                 continue
             
             # Extract headers
@@ -94,11 +99,6 @@ def scrape_nepse_data(max_retries=3):
                 writer.writerows(rows)
             
             print(f"Data successfully scraped and saved to '{filename}'")
-            
-            # Optional: Save HTML for debugging
-            with open(f'data/debug_page_{timestamp}.html', 'w', encoding='utf-8') as f:
-                f.write(response.text)
-            
             return True
             
         except requests.RequestException as e:
