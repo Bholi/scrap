@@ -1,134 +1,38 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, WebDriverException
+import requests
 from bs4 import BeautifulSoup
-import csv
-import time
 
-def setup_driver():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    
-    return webdriver.Chrome(options=chrome_options)
-
-def scrape_nepse_data(max_retries=3, wait_time=30):
-    for attempt in range(max_retries):
-        driver = None
-        try:
-            print(f"Attempt {attempt + 1} of {max_retries}")
-            
-            driver = setup_driver()
-            
-            # Open the webpage
-            url = 'https://nepalstock.com/live-market'
-            driver.get(url)
-            
-            # Add initial wait for page load
-            time.sleep(5)
-            
-            # Wait for table with multiple possible selectors
-            table_selectors = [
-                "table.table",
-                "table.table__border",
-                ".table-responsive table"
-            ]
-            
-            table_found = False
-            for selector in table_selectors:
-                try:
-                    WebDriverWait(driver, wait_time).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                    )
-                    table_found = True
-                    print(f"Table found using selector: {selector}")
-                    break
-                except TimeoutException:
-                    continue
-            
-            if not table_found:
-                print("Could not find table with any selector")
-                continue
-            
-            # Get page source and parse
-            page_content = driver.page_source
-            soup = BeautifulSoup(page_content, 'html.parser')
-            
-            # Try multiple possible table classes
-            table = None
-            possible_classes = [
-                'table table__border table__lg table-striped table__border--bottom table-head-fixed',
-                'table',
-                'table table-striped'
-            ]
-            
-            for class_name in possible_classes:
-                table = soup.find('table', class_=class_name)
-                if table:
-                    break
-            
-            if not table:
-                print("Table not found in the HTML")
-                continue
-            
-            # Extract headers
-            headers = []
-            header_row = table.find('thead')
-            if header_row:
-                headers = [th.text.strip() for th in header_row.find_all('th')]
-            
-            if not headers:
-                print("No headers found")
-                continue
-            
-            # Extract rows
-            tbody = table.find('tbody')
-            if not tbody:
-                print("No table body found")
-                continue
-                
-            rows = []
-            for tr in tbody.find_all('tr'):
-                row_data = [td.text.strip() for td in tr.find_all('td')]
-                if row_data:  # Only add non-empty rows
-                    rows.append(row_data)
-            
-            if not rows:
-                print("No data rows found")
-                continue
-            
-            # Save to CSV
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            filename = f'nepal_stock_data_{timestamp}.csv'
-            
-            with open(filename, 'w', newline='', encoding='utf-8') as file:
-                writer = csv.writer(file)
-                writer.writerow(headers)
-                writer.writerows(rows)
-            
-            print(f"Data successfully scraped and saved to '{filename}'")
-            return True
-            
-        except WebDriverException as e:
-            print(f"WebDriver error: {str(e)}")
-        except Exception as e:
-            print(f"Unexpected error: {str(e)}")
-        finally:
-            if driver:
-                driver.quit()
+def simple_scraper(url):
+    try:
+        # Send an HTTP GET request to the URL
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()  # Raise an exception for HTTP errors
         
-        print(f"Attempt {attempt + 1} failed. Waiting before retry...")
-        time.sleep(5)
-    
-    print("All attempts failed")
-    return False
+        # Parse the webpage content
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Extract all <p> tags
+        paragraphs = [p.text.strip() for p in soup.find_all('p')]
+        print("Paragraphs:")
+        for para in paragraphs:
+            print(para)
+        
+        # Extract all <h1> tags
+        headings = [h1.text.strip() for h1 in soup.find_all('h1')]
+        print("\nHeadings:")
+        for heading in headings:
+            print(heading)
+        
+        return {
+            "paragraphs": paragraphs,
+            "headings": headings
+        }
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching the URL: {e}")
+        return None
 
 if __name__ == "__main__":
-    scrape_nepse_data()
+    url = "https://example.com"
+    result = simple_scraper(url)
+    if result:
+        print("\nScraping completed successfully.")
