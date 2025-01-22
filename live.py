@@ -5,6 +5,7 @@ import json
 from colorama import Fore, Style, init
 from bs4 import BeautifulSoup
 import time
+import certifi  # For SSL certificate handling
 
 url = "https://www.nepalstock.com/floor-sheet"
 
@@ -22,7 +23,7 @@ amount = []
 
 def pd_columns() -> list:
     """Fetch the headers from the table on the floor sheet page."""
-    res = requests.get(url).text
+    res = requests.get(url, verify=certifi.where()).text  # Using certifi for SSL certificate verification
     souped_data = BeautifulSoup(res, 'html5lib')
     main_table = souped_data.find_all('table', attrs={'class': 'table table__lg table-striped table__border table__border--bottom'})[0]
     
@@ -37,7 +38,7 @@ def pd_columns() -> list:
 def scrap():
     """Scrape the floor sheet data."""
     for page_indexing in range(1):  # You can adjust the range to loop through multiple pages if required.
-        res = requests.get(url).content.decode('utf-8')
+        res = requests.get(url, verify=certifi.where()).content.decode('utf-8')
         souped_data = BeautifulSoup(res, 'html.parser')
         main_table = souped_data.find_all('table', {'class': 'table table__lg table-striped table__border table__border--bottom'})[0]
         
@@ -56,6 +57,7 @@ def scrap():
                 amount.append(vals[7].getText().strip())
                 
                 print(f'{Fore.GREEN}{Style.BRIGHT}[-]  {Fore.WHITE}{Style.BRIGHT}Stock Symbol: {vals[2].getText()}')
+                time.sleep(1)  # Adding a delay to prevent overloading the server
             except IndexError:
                 break  # Stop if there's an issue parsing rows
 
