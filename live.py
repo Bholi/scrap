@@ -1,77 +1,33 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, WebDriverException
+import requests
 from bs4 import BeautifulSoup
 import csv
 import time
 import os
+from datetime import datetime
 
-def setup_driver():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")  # Required for running in Docker/VPS
-    chrome_options.add_argument("--disable-dev-shm-usage")  # Required for running in Docker/VPS
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    
-    # Set up ChromeDriver service
-    service = Service('/usr/local/bin/chromedriver')
-    
-    try:
-        return webdriver.Chrome(service=service, options=chrome_options)
-    except Exception as e:
-        print(f"Error creating WebDriver: {str(e)}")
-        raise
+def scrape_nepse_data(max_retries=3):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    }
 
-def scrape_nepse_data(max_retries=3, wait_time=30):
+    url = 'https://nepalstock.com/live-market'
+    
     for attempt in range(max_retries):
-        driver = None
         try:
-            print(f"Attempt {attempt + 1} of {max_retries}")
+            print(f"\nAttempt {attempt + 1} of {max_retries}")
             
-            driver = setup_driver()
-            print("WebDriver initialized successfully")
+            # Make the request
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()  # Raise an exception for bad status codes
             
-            # Open the webpage
-            url = 'https://nepalstock.com/live-market'
-            print(f"Accessing URL: {url}")
-            driver.get(url)
+            print(f"Successfully fetched the page. Status code: {response.status_code}")
             
-            # Add initial wait for page load
-            time.sleep(5)
-            
-            # Wait for table with multiple possible selectors
-            table_selectors = [
-                "table.table",
-                "table.table__border",
-                ".table-responsive table"
-            ]
-            
-            table_found = False
-            for selector in table_selectors:
-                try:
-                    print(f"Trying selector: {selector}")
-                    WebDriverWait(driver, wait_time).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                    )
-                    table_found = True
-                    print(f"Table found using selector: {selector}")
-                    break
-                except TimeoutException:
-                    continue
-            
-            if not table_found:
-                print("Could not find table with any selector")
-                continue
-            
-            # Get page source and parse
-            page_content = driver.page_source
-            soup = BeautifulSoup(page_content, 'html.parser')
+            # Parse the HTML
+            soup = BeautifulSoup(response.text, 'html.parser')
             
             # Try multiple possible table classes
             table = None
@@ -89,6 +45,10 @@ def scrape_nepse_data(max_retries=3, wait_time=30):
             
             if not table:
                 print("Table not found in the HTML")
+                print("Available tables:")
+                all_tables = soup.find_all('table')
+                for idx, t in enumerate(all_tables):
+                    print(f"Table {idx + 1} classes: {t.get('class', 'No class')}")
                 continue
             
             # Extract headers
@@ -100,6 +60,8 @@ def scrape_nepse_data(max_retries=3, wait_time=30):
             if not headers:
                 print("No headers found")
                 continue
+            
+            print(f"Found headers: {headers}")
             
             # Extract rows
             tbody = table.find('tbody')
@@ -117,11 +79,13 @@ def scrape_nepse_data(max_retries=3, wait_time=30):
                 print("No data rows found")
                 continue
             
+            print(f"Found {len(rows)} rows of data")
+            
             # Create data directory if it doesn't exist
             os.makedirs('data', exist_ok=True)
             
             # Save to CSV
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f'data/nepal_stock_data_{timestamp}.csv'
             
             with open(filename, 'w', newline='', encoding='utf-8') as file:
@@ -130,20 +94,19 @@ def scrape_nepse_data(max_retries=3, wait_time=30):
                 writer.writerows(rows)
             
             print(f"Data successfully scraped and saved to '{filename}'")
+            
+            # Optional: Save HTML for debugging
+            with open(f'data/debug_page_{timestamp}.html', 'w', encoding='utf-8') as f:
+                f.write(response.text)
+            
             return True
             
-        except WebDriverException as e:
-            print(f"WebDriver error: {str(e)}")
+        except requests.RequestException as e:
+            print(f"Request error: {str(e)}")
         except Exception as e:
             print(f"Unexpected error: {str(e)}")
             import traceback
             print(traceback.format_exc())
-        finally:
-            if driver:
-                try:
-                    driver.quit()
-                except Exception as e:
-                    print(f"Error closing driver: {str(e)}")
         
         print(f"Attempt {attempt + 1} failed. Waiting before retry...")
         time.sleep(5)
