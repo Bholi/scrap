@@ -1,7 +1,9 @@
 import requests
 from bs4 import BeautifulSoup
+import csv
+import time
 
-def simple_scraper(url):
+def scrape_nepalstock_floor_sheet(url):
     try:
         # Send an HTTP GET request to the URL
         response = requests.get(url, timeout=10)
@@ -10,29 +12,47 @@ def simple_scraper(url):
         # Parse the webpage content
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Extract all <p> tags
-        paragraphs = [p.text.strip() for p in soup.find_all('p')]
-        print("Paragraphs:")
-        for para in paragraphs:
-            print(para)
+        # Find the specific table by class
+        table = soup.find('table', class_='table table__lg table-striped table__border table__border--bottom')
+        if not table:
+            print("Table not found on the page.")
+            return None
         
-        # Extract all <h1> tags
-        headings = [h1.text.strip() for h1 in soup.find_all('h1')]
-        print("\nHeadings:")
-        for heading in headings:
-            print(heading)
+        # Extract headers from the table
+        headers = [th.text.strip() for th in table.find('thead').find_all('th')]
+        print("Headers:", headers)
         
-        return {
-            "paragraphs": paragraphs,
-            "headings": headings
-        }
+        # Extract rows from the table
+        rows = []
+        tbody = table.find('tbody')
+        for tr in tbody.find_all('tr'):
+            row_data = [td.text.strip() for td in tr.find_all('td')]
+            if row_data:  # Only add non-empty rows
+                rows.append(row_data)
         
+        if not rows:
+            print("No rows found in the table.")
+            return None
+        
+        # Save the data to a CSV file
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f'nepal_stock_floor_sheet_{timestamp}.csv'
+        
+        with open(filename, 'w', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            writer.writerow(headers)  # Write headers
+            writer.writerows(rows)  # Write data rows
+        
+        print(f"Data successfully scraped and saved to '{filename}'.")
+        return filename
+    
     except requests.exceptions.RequestException as e:
         print(f"Error fetching the URL: {e}")
         return None
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return None
 
 if __name__ == "__main__":
-    url = "https://example.com"
-    result = simple_scraper(url)
-    if result:
-        print("\nScraping completed successfully.")
+    url = "https://nepalstock.com/floor-sheet"
+    scrape_nepalstock_floor_sheet(url)
