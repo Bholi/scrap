@@ -1,79 +1,132 @@
-import httpx
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
+from bs4 import BeautifulSoup
 import csv
-from datetime import datetime
 import time
 
-def scrape_nepse_data(max_retries=3, wait_time=10):
-    url = 'https://nepalstock.com/live-market'
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    }
+def setup_driver():
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    
+    return webdriver.Chrome(options=chrome_options)
 
+def scrape_nepse_data(max_retries=3, wait_time=30):
     for attempt in range(max_retries):
+        driver = None
         try:
             print(f"Attempt {attempt + 1} of {max_retries}")
-
-            # Create an HTTP client with HTTP/2 support
-            with httpx.Client(http2=True, verify=True) as client:
-                print("Accessing NEPSE live market...")
-                response = client.get(url, headers=headers, timeout=30)
-
-            # Check HTTP status code
-            if response.status_code != 200:
-                print(f"Failed with status code: {response.status_code}")
-                time.sleep(wait_time)
+            
+            driver = setup_driver()
+            
+            # Open the webpage
+            url = 'https://nepalstock.com/live-market'
+            driver.get(url)
+            
+            # Add initial wait for page load
+            time.sleep(5)
+            
+            # Wait for table with multiple possible selectors
+            table_selectors = [
+                "table.table",
+                "table.table__border",
+                ".table-responsive table"
+            ]
+            
+            table_found = False
+            for selector in table_selectors:
+                try:
+                    WebDriverWait(driver, wait_time).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                    )
+                    table_found = True
+                    print(f"Table found using selector: {selector}")
+                    break
+                except TimeoutException:
+                    continue
+            
+            if not table_found:
+                print("Could not find table with any selector")
                 continue
-
-            # Parse the response content
-            print("Processing market data...")
-            html_content = response.text
-
-            # Extract the table (adjust the selector based on NEPSE's actual HTML)
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html_content, 'html.parser')
-            table = soup.find('table', class_='table table__border table__lg')
-
+            
+            # Get page source and parse
+            page_content = driver.page_source
+            soup = BeautifulSoup(page_content, 'html.parser')
+            
+            # Try multiple possible table classes
+            table = None
+            possible_classes = [
+                'table table__border table__lg table-striped table__border--bottom table-head-fixed',
+                'table',
+                'table table-striped'
+            ]
+            
+            for class_name in possible_classes:
+                table = soup.find('table', class_=class_name)
+                if table:
+                    break
+            
             if not table:
-                print("Market data table not found, retrying...")
-                time.sleep(wait_time)
+                print("Table not found in the HTML")
                 continue
-
+            
             # Extract headers
-            headers = [th.text.strip() for th in table.find('thead').find_all('th')]
-            print("Found headers:", headers)
-
+            headers = []
+            header_row = table.find('thead')
+            if header_row:
+                headers = [th.text.strip() for th in header_row.find_all('th')]
+            
+            if not headers:
+                print("No headers found")
+                continue
+            
             # Extract rows
-            rows = []
             tbody = table.find('tbody')
+            if not tbody:
+                print("No table body found")
+                continue
+                
+            rows = []
             for tr in tbody.find_all('tr'):
                 row_data = [td.text.strip() for td in tr.find_all('td')]
-                if row_data:
+                if row_data:  # Only add non-empty rows
                     rows.append(row_data)
-
+            
             if not rows:
-                print("No data rows found, retrying...")
-                time.sleep(wait_time)
+                print("No data rows found")
                 continue
-
-            print(f"Found {len(rows)} rows of data")
-
+            
             # Save to CSV
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f'nepse_live_market_{timestamp}.csv'
-
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f'nepal_stock_data_{timestamp}.csv'
+            
             with open(filename, 'w', newline='', encoding='utf-8') as file:
                 writer = csv.writer(file)
                 writer.writerow(headers)
                 writer.writerows(rows)
-
+            
             print(f"Data successfully scraped and saved to '{filename}'")
             return True
-
+            
+        except WebDriverException as e:
+            print(f"WebDriver error: {str(e)}")
         except Exception as e:
-            print(f"An error occurred: {e}")
-            time.sleep(wait_time)
-
+            print(f"Unexpected error: {str(e)}")
+        finally:
+            if driver:
+                driver.quit()
+        
+        print(f"Attempt {attempt + 1} failed. Waiting before retry...")
+        time.sleep(5)
+    
     print("All attempts failed")
     return False
 
