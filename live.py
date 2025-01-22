@@ -6,7 +6,7 @@ import csv
 
 def scrape_nepse_data(max_retries=3, wait_time=10):
     session = HTMLSession()
-    
+
     for attempt in range(max_retries):
         try:
             print(f"Attempt {attempt + 1} of {max_retries}")
@@ -26,7 +26,7 @@ def scrape_nepse_data(max_retries=3, wait_time=10):
             
             # Render JavaScript
             print("Rendering JavaScript content...")
-            response.html.render(timeout=30, sleep=5)
+            response.html.render(timeout=60, sleep=5, keep_page=True)  # Increased timeout and sleep
             
             # Find the table
             print("Looking for market data table...")
