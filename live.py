@@ -11,9 +11,15 @@ def scrape_nepse_data(max_retries=3, wait_time=5):
             try:
                 print(f"Attempt {attempt + 1} of {max_retries}")
                 
-                # Launch browser in headless mode
-                browser = p.firefox.launch(headless=True)
-                page = browser.new_page()
+                # Launch browser in headless mode with ignore-certificate-errors
+                browser = p.firefox.launch(
+                    headless=True,
+                    args=['--ignore-certificate-errors']
+                )
+                
+                # Create a new browser context with ignore_https_errors
+                context = browser.new_context(ignore_https_errors=True)
+                page = context.new_page()
                 
                 # Set user agent
                 page.set_extra_http_headers({
@@ -22,7 +28,7 @@ def scrape_nepse_data(max_retries=3, wait_time=5):
                 
                 # Navigate to the page
                 url = 'https://nepalstock.com/live-market'
-                page.goto(url)
+                page.goto(url, wait_until='networkidle')
                 
                 # Wait for table to be visible
                 page.wait_for_selector('table', timeout=30000)
@@ -49,6 +55,8 @@ def scrape_nepse_data(max_retries=3, wait_time=5):
                 
                 if not table:
                     print("Table not found in the HTML")
+                    print("Page content:")
+                    print(soup.prettify()[:500])  # Print first 500 chars for debugging
                     continue
                 
                 # Extract headers
@@ -91,6 +99,12 @@ def scrape_nepse_data(max_retries=3, wait_time=5):
                 
             except Exception as e:
                 print(f"Error: {str(e)}")
+                if "Page.goto" in str(e):
+                    print("Trying to print page content for debugging...")
+                    try:
+                        print(page.content()[:500])
+                    except:
+                        print("Could not get page content")
             finally:
                 if browser:
                     browser.close()
