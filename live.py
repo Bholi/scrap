@@ -1,91 +1,134 @@
-import requests
-import os
-import pandas as pd
-import json
-from colorama import Fore, Style, init
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from bs4 import BeautifulSoup
+import csv
 import time
-import certifi  # For SSL certificate handling
 
-url = "https://www.nepalstock.com/floor-sheet"
-
-init(autoreset=True)
-
-# Lists to hold the scraped data
-SN = []
-contract_no = []
-stock_symbol = []
-buyer = []
-seller = []
-quantity = []
-rate = []
-amount = []
-
-def pd_columns() -> list:
-    """Fetch the headers from the table on the floor sheet page."""
-    res = requests.get(url, verify=certifi.where()).text  # Using certifi for SSL certificate verification
-    souped_data = BeautifulSoup(res, 'html5lib')
-    main_table = souped_data.find_all('table', attrs={'class': 'table table__lg table-striped table__border table__border--bottom'})[0]
+def setup_driver():
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
-    headers = []
-    for th in main_table.find('thead').find_all('th'):
-        headers.append(th.getText().strip())
-    
-    # Clean up headers if needed (remove empty or unwanted columns)
-    headers = list(filter(lambda x: x != "", headers))
-    return headers
+    return webdriver.Chrome(options=chrome_options)
 
-def scrap():
-    """Scrape the floor sheet data."""
-    for page_indexing in range(1):  # You can adjust the range to loop through multiple pages if required.
-        res = requests.get(url, verify=certifi.where()).content.decode('utf-8')
-        souped_data = BeautifulSoup(res, 'html.parser')
-        main_table = souped_data.find_all('table', {'class': 'table table__lg table-striped table__border table__border--bottom'})[0]
+def scrape_nepse_data(max_retries=3, wait_time=30):
+    for attempt in range(max_retries):
+        driver = None
+        try:
+            print(f"Attempt {attempt + 1} of {max_retries}")
+            
+            driver = setup_driver()
+            
+            # Open the webpage
+            url = 'https://nepalstock.com/live-market'
+            driver.get(url)
+            
+            # Add initial wait for page load
+            time.sleep(5)
+            
+            # Wait for table with multiple possible selectors
+            table_selectors = [
+                "table.table",
+                "table.table__border",
+                ".table-responsive table"
+            ]
+            
+            table_found = False
+            for selector in table_selectors:
+                try:
+                    WebDriverWait(driver, wait_time).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                    )
+                    table_found = True
+                    print(f"Table found using selector: {selector}")
+                    break
+                except TimeoutException:
+                    continue
+            
+            if not table_found:
+                print("Could not find table with any selector")
+                continue
+            
+            # Get page source and parse
+            page_content = driver.page_source
+            soup = BeautifulSoup(page_content, 'html.parser')
+            
+            # Try multiple possible table classes
+            table = None
+            possible_classes = [
+                'table table__border table__lg table-striped table__border--bottom table-head-fixed',
+                'table',
+                'table table-striped'
+            ]
+            
+            for class_name in possible_classes:
+                table = soup.find('table', class_=class_name)
+                if table:
+                    break
+            
+            if not table:
+                print("Table not found in the HTML")
+                continue
+            
+            # Extract headers
+            headers = []
+            header_row = table.find('thead')
+            if header_row:
+                headers = [th.text.strip() for th in header_row.find_all('th')]
+            
+            if not headers:
+                print("No headers found")
+                continue
+            
+            # Extract rows
+            tbody = table.find('tbody')
+            if not tbody:
+                print("No table body found")
+                continue
+                
+            rows = []
+            for tr in tbody.find_all('tr'):
+                row_data = [td.text.strip() for td in tr.find_all('td')]
+                if row_data:  # Only add non-empty rows
+                    rows.append(row_data)
+            
+            if not rows:
+                print("No data rows found")
+                continue
+            
+            # Save to CSV
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f'nepal_stock_data_{timestamp}.csv'
+            
+            with open(filename, 'w', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
+                writer.writerow(headers)
+                writer.writerows(rows)
+            
+            print(f"Data successfully scraped and saved to '{filename}'")
+            return True
+            
+        except WebDriverException as e:
+            print(f"WebDriver error: {str(e)}")
+        except Exception as e:
+            print(f"Unexpected error: {str(e)}")
+        finally:
+            if driver:
+                driver.quit()
         
-        # Extract table rows and scrape data
-        for trs in main_table.find_all('tr')[1:]:  # Skipping the first row which is the header
-            try:
-                vals = trs.find_all('td')
-                
-                SN.append(vals[0].getText().strip())
-                contract_no.append(vals[1].getText().strip())
-                stock_symbol.append(vals[2].getText().strip())
-                buyer.append(vals[3].getText().strip())
-                seller.append(vals[4].getText().strip())
-                quantity.append(vals[5].getText().strip())
-                rate.append(vals[6].getText().strip())
-                amount.append(vals[7].getText().strip())
-                
-                print(f'{Fore.GREEN}{Style.BRIGHT}[-]  {Fore.WHITE}{Style.BRIGHT}Stock Symbol: {vals[2].getText()}')
-                time.sleep(1)  # Adding a delay to prevent overloading the server
-            except IndexError:
-                break  # Stop if there's an issue parsing rows
-
-def createCSV(file_name: str):
-    """Create CSV file from scraped data."""
-    titles = pd_columns()
-    df = pd.DataFrame(columns=titles)
+        print(f"Attempt {attempt + 1} failed. Waiting before retry...")
+        time.sleep(5)
     
-    df["SN"] = SN
-    df["Contract No."] = contract_no
-    df["Stock Symbol"] = stock_symbol
-    df["Buyer"] = buyer
-    df["Seller"] = seller
-    df["Quantity"] = quantity
-    df["Rate (Rs)"] = rate
-    df["Amount (Rs)"] = amount
-    
-    df.to_csv(f"{file_name}.csv", index=False)
-    print(f"File saved as {Fore.RED}{Style.BRIGHT}{file_name}.csv")
+    print("All attempts failed")
+    return False
 
 if __name__ == "__main__":
-    scrap()
-    
-    yes_or_no = input("Do you want to save your file (y/n):  ")
-    
-    if yes_or_no.lower() == "y":
-        file_name = input("Enter your file name: ")
-        createCSV(file_name)
-    else:
-        print("Okay, exiting...")
-        exit()
+    scrape_nepse_data()
