@@ -1,59 +1,93 @@
-import requests
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from bs4 import BeautifulSoup
 import csv
 import time
 import os
 from datetime import datetime
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
-# Suppress only the single warning from urllib3 needed.
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+def setup_driver():
+    chrome_options = Options()
+    chrome_options.add_argument('--headless')
+    chrome_options.add_argument('--no-sandbox')
+    chrome_options.add_argument('--disable-dev-shm-usage')
+    chrome_options.add_argument('--disable-gpu')
+    chrome_options.add_argument('--ignore-certificate-errors')  # Handle SSL issues
+    chrome_options.page_load_strategy = 'eager'  # Load faster
+    
+    service = Service('/usr/local/bin/chromedriver')
+    
+    try:
+        return webdriver.Chrome(service=service, options=chrome_options)
+    except Exception as e:
+        print(f"Error creating WebDriver: {str(e)}")
+        raise
+
+def wait_for_table_load(driver, timeout=60):
+    """Wait for the table to be fully loaded"""
+    try:
+        # Wait for table to be present
+        WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.CLASS_NAME, "table-responsive"))
+        )
+        
+        # Wait for rows to be loaded (adjust the path as needed)
+        WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "tbody tr"))
+        )
+        
+        # Additional wait to ensure data is populated
+        time.sleep(5)
+        
+        return True
+    except TimeoutException:
+        print("Timeout waiting for table to load")
+        return False
 
 def scrape_nepse_data(max_retries=3):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-    }
-
-    url = 'https://nepalstock.com/live-market'
-    
     for attempt in range(max_retries):
+        driver = None
         try:
             print(f"\nAttempt {attempt + 1} of {max_retries}")
             
-            # Make the request with SSL verification disabled
-            response = requests.get(url, headers=headers, timeout=30, verify=False)
-            response.raise_for_status()
+            driver = setup_driver()
+            print("WebDriver initialized successfully")
             
-            print(f"Successfully fetched the page. Status code: {response.status_code}")
+            # Open the webpage
+            url = 'https://nepalstock.com/live-market'
+            print(f"Accessing URL: {url}")
+            driver.get(url)
             
-            # Parse the HTML
-            soup = BeautifulSoup(response.text, 'html.parser')
+            # Wait for initial page load
+            print("Waiting for page to load...")
+            time.sleep(10)  # Initial wait
             
-            # Try multiple possible table classes
-            table = None
-            possible_classes = [
-                'table table__border table__lg table-striped table__border--bottom table-head-fixed',
-                'table',
-                'table table-striped'
-            ]
+            # Wait for table to be loaded
+            if not wait_for_table_load(driver):
+                print("Table did not load properly")
+                continue
             
-            for class_name in possible_classes:
-                table = soup.find('table', class_=class_name)
-                if table:
-                    print(f"Found table with class: {class_name}")
-                    break
+            print("Table appears to be loaded, extracting data...")
+            
+            # Get page source after JavaScript execution
+            page_content = driver.page_source
+            soup = BeautifulSoup(page_content, 'html.parser')
+            
+            # Save HTML for debugging
+            debug_file = f'debug_page_{datetime.now().strftime("%Y%m%d_%H%M%S")}.html'
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(page_content)
+            
+            # Find the table
+            table = soup.find('table', class_='table')
             
             if not table:
-                print("Table not found in the HTML")
-                # Save HTML for debugging
-                debug_file = f'debug_page_{datetime.now().strftime("%Y%m%d_%H%M%S")}.html'
-                with open(debug_file, 'w', encoding='utf-8') as f:
-                    f.write(response.text)
-                print(f"Saved HTML content to {debug_file} for debugging")
+                print("Table not found after waiting")
                 continue
             
             # Extract headers
@@ -101,15 +135,20 @@ def scrape_nepse_data(max_retries=3):
             print(f"Data successfully scraped and saved to '{filename}'")
             return True
             
-        except requests.RequestException as e:
-            print(f"Request error: {str(e)}")
         except Exception as e:
-            print(f"Unexpected error: {str(e)}")
+            print(f"Error: {str(e)}")
             import traceback
             print(traceback.format_exc())
         
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
+            
         print(f"Attempt {attempt + 1} failed. Waiting before retry...")
-        time.sleep(5)
+        time.sleep(10)  # Longer wait between attempts
     
     print("All attempts failed")
     return False
