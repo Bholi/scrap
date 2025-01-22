@@ -3,6 +3,22 @@ from bs4 import BeautifulSoup
 import csv
 import time
 from datetime import datetime
+import urllib3
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+def create_session():
+    # Create a session with retry strategy
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=1,
+        status_forcelist=[500, 502, 503, 504]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 def scrape_nepse_data(max_retries=3, wait_time=5):
     # Headers to mimic a browser request
@@ -14,13 +30,19 @@ def scrape_nepse_data(max_retries=3, wait_time=5):
     }
 
     url = 'https://nepalstock.com/live-market'
+    session = create_session()
 
     for attempt in range(max_retries):
         try:
             print(f"Attempt {attempt + 1} of {max_retries}")
             
-            # Make the request
-            response = requests.get(url, headers=headers, timeout=30)
+            # Make the request with SSL verification disabled
+            response = session.get(
+                url, 
+                headers=headers, 
+                timeout=30,
+                verify=False  # Disable SSL verification
+            )
             response.raise_for_status()  # Raise an exception for bad status codes
             
             # Parse the HTML
@@ -93,4 +115,6 @@ def scrape_nepse_data(max_retries=3, wait_time=5):
     return False
 
 if __name__ == "__main__":
+    # Disable SSL verification warnings
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     scrape_nepse_data()
