@@ -1,5 +1,6 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -7,17 +8,25 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 from bs4 import BeautifulSoup
 import csv
 import time
+import os
 
 def setup_driver():
     chrome_options = Options()
     chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")  # Required for running in Docker/VPS
+    chrome_options.add_argument("--disable-dev-shm-usage")  # Required for running in Docker/VPS
     chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
-    return webdriver.Chrome(options=chrome_options)
+    # Set up ChromeDriver service
+    service = Service('/usr/local/bin/chromedriver')
+    
+    try:
+        return webdriver.Chrome(service=service, options=chrome_options)
+    except Exception as e:
+        print(f"Error creating WebDriver: {str(e)}")
+        raise
 
 def scrape_nepse_data(max_retries=3, wait_time=30):
     for attempt in range(max_retries):
@@ -26,9 +35,11 @@ def scrape_nepse_data(max_retries=3, wait_time=30):
             print(f"Attempt {attempt + 1} of {max_retries}")
             
             driver = setup_driver()
+            print("WebDriver initialized successfully")
             
             # Open the webpage
             url = 'https://nepalstock.com/live-market'
+            print(f"Accessing URL: {url}")
             driver.get(url)
             
             # Add initial wait for page load
@@ -44,6 +55,7 @@ def scrape_nepse_data(max_retries=3, wait_time=30):
             table_found = False
             for selector in table_selectors:
                 try:
+                    print(f"Trying selector: {selector}")
                     WebDriverWait(driver, wait_time).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                     )
@@ -72,6 +84,7 @@ def scrape_nepse_data(max_retries=3, wait_time=30):
             for class_name in possible_classes:
                 table = soup.find('table', class_=class_name)
                 if table:
+                    print(f"Found table with class: {class_name}")
                     break
             
             if not table:
@@ -104,9 +117,12 @@ def scrape_nepse_data(max_retries=3, wait_time=30):
                 print("No data rows found")
                 continue
             
+            # Create data directory if it doesn't exist
+            os.makedirs('data', exist_ok=True)
+            
             # Save to CSV
             timestamp = time.strftime("%Y%m%d_%H%M%S")
-            filename = f'nepal_stock_data_{timestamp}.csv'
+            filename = f'data/nepal_stock_data_{timestamp}.csv'
             
             with open(filename, 'w', newline='', encoding='utf-8') as file:
                 writer = csv.writer(file)
@@ -120,9 +136,14 @@ def scrape_nepse_data(max_retries=3, wait_time=30):
             print(f"WebDriver error: {str(e)}")
         except Exception as e:
             print(f"Unexpected error: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
         finally:
             if driver:
-                driver.quit()
+                try:
+                    driver.quit()
+                except Exception as e:
+                    print(f"Error closing driver: {str(e)}")
         
         print(f"Attempt {attempt + 1} failed. Waiting before retry...")
         time.sleep(5)
