@@ -1,119 +1,94 @@
-from playwright.sync_api import sync_playwright
-from bs4 import BeautifulSoup
-import csv
-from datetime import datetime
+from requests_html import HTMLSession
+import pandas as pd
 import time
+from datetime import datetime
+import csv
 
-def scrape_nepse_data(max_retries=3, wait_time=5):
-    with sync_playwright() as p:
-        for attempt in range(max_retries):
-            browser = None
-            try:
-                print(f"Attempt {attempt + 1} of {max_retries}")
+def scrape_nepse_data(max_retries=3, wait_time=10):
+    session = HTMLSession()
+    
+    for attempt in range(max_retries):
+        try:
+            print(f"Attempt {attempt + 1} of {max_retries}")
+            
+            # Configure headers
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Connection': 'keep-alive',
+            }
+            
+            # Make the request
+            url = 'https://nepalstock.com/live-market'
+            print("Accessing NEPSE live market...")
+            response = session.get(url, headers=headers, verify=False)
+            
+            # Render JavaScript
+            print("Rendering JavaScript content...")
+            response.html.render(timeout=30, sleep=5)
+            
+            # Find the table
+            print("Looking for market data table...")
+            table = response.html.find('table.table.table__border.table__lg', first=True)
+            
+            if not table:
+                print("Table not found, retrying...")
+                time.sleep(wait_time)
+                continue
+            
+            # Extract headers
+            headers = []
+            thead = table.find('thead', first=True)
+            if thead:
+                headers = [th.text.strip() for th in thead.find('th')]
+            
+            if not headers:
+                print("No headers found, retrying...")
+                time.sleep(wait_time)
+                continue
                 
-                # Launch browser in headless mode with ignore-certificate-errors
-                browser = p.firefox.launch(
-                    headless=True,
-                    args=['--ignore-certificate-errors']
-                )
-                
-                # Create a new browser context with ignore_https_errors
-                context = browser.new_context(ignore_https_errors=True)
-                page = context.new_page()
-                
-                # Set user agent
-                page.set_extra_http_headers({
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                })
-                
-                # Navigate to the page
-                url = 'https://nepalstock.com/live-market'
-                page.goto(url, wait_until='networkidle')
-                
-                # Wait for table to be visible
-                page.wait_for_selector('table', timeout=30000)
-                
-                # Additional wait for dynamic content
-                time.sleep(5)
-                
-                # Get the page content
-                content = page.content()
-                soup = BeautifulSoup(content, 'html.parser')
-                
-                # Try multiple possible table classes
-                table = None
-                possible_classes = [
-                    'table table__border table__lg table-striped table__border--bottom table-head-fixed',
-                    'table',
-                    'table table-striped'
-                ]
-                
-                for class_name in possible_classes:
-                    table = soup.find('table', class_=class_name)
-                    if table:
-                        break
-                
-                if not table:
-                    print("Table not found in the HTML")
-                    print("Page content:")
-                    print(soup.prettify()[:500])  # Print first 500 chars for debugging
-                    continue
-                
-                # Extract headers
-                headers = []
-                header_row = table.find('thead')
-                if header_row:
-                    headers = [th.text.strip() for th in header_row.find_all('th')]
-                
-                if not headers:
-                    print("No headers found")
-                    continue
-                
-                # Extract rows
-                tbody = table.find('tbody')
-                if not tbody:
-                    print("No table body found")
-                    continue
-                    
-                rows = []
-                for tr in tbody.find_all('tr'):
-                    row_data = [td.text.strip() for td in tr.find_all('td')]
+            print("Found headers:", headers)
+            
+            # Extract rows
+            rows = []
+            tbody = table.find('tbody', first=True)
+            if tbody:
+                for tr in tbody.find('tr'):
+                    row_data = [td.text.strip() for td in tr.find('td')]
                     if row_data:  # Only add non-empty rows
                         rows.append(row_data)
-                
-                if not rows:
-                    print("No data rows found")
-                    continue
-                
-                # Save to CSV
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f'nepal_stock_data_{timestamp}.csv'
-                
-                with open(filename, 'w', newline='', encoding='utf-8') as file:
-                    writer = csv.writer(file)
-                    writer.writerow(headers)
-                    writer.writerows(rows)
-                
-                print(f"Data successfully scraped and saved to '{filename}'")
-                return True
-                
-            except Exception as e:
-                print(f"Error: {str(e)}")
-                if "Page.goto" in str(e):
-                    print("Trying to print page content for debugging...")
-                    try:
-                        print(page.content()[:500])
-                    except:
-                        print("Could not get page content")
-            finally:
-                if browser:
-                    browser.close()
             
-            print(f"Attempt {attempt + 1} failed. Waiting before retry...")
+            if not rows:
+                print("No data rows found, retrying...")
+                time.sleep(wait_time)
+                continue
+                
+            print(f"Found {len(rows)} rows of data")
+            
+            # Save to CSV
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f'nepse_live_market_{timestamp}.csv'
+            
+            with open(filename, 'w', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
+                writer.writerow(headers)
+                writer.writerows(rows)
+            
+            print(f"Data successfully scraped and saved to '{filename}'")
+            
+            # Close the session
+            session.close()
+            return True
+            
+        except Exception as e:
+            print(f"Error occurred: {str(e)}")
             time.sleep(wait_time)
+            continue
         
-        print("All attempts failed")
-        return False
+    print("All attempts failed")
+    session.close()
+    return False
 
 if __name__ == "__main__":
     scrape_nepse_data()
