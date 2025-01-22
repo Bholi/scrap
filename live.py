@@ -2,111 +2,88 @@ import requests
 import os
 import pandas as pd
 import json
-from colorama import Fore,Style,Back,init
+from colorama import Fore, Style, init
 from bs4 import BeautifulSoup
 import time
 
-url = "http://www.nepalstock.com/main/todays_price/index/"
+url = "https://www.nepalstock.com/floor-sheet"
 
 init(autoreset=True)
 
-titles=[]
-SN=[]
-traded_comp=[]
-no_of_trans=[]
-max_price=[]
-min_price=[]
-closing_price=[]
-traded_shares=[]
-amount=[]
-prev_closing=[]
-difference=[]  
-
+# Lists to hold the scraped data
+SN = []
+contract_no = []
+stock_symbol = []
+buyer = []
+seller = []
+quantity = []
+rate = []
+amount = []
 
 def pd_columns() -> list:
-
-    for firstpage in range(1):
-        res=requests.get(f"{url}{firstpage+1}").text
-        souped_data=BeautifulSoup(res,'html5lib')
-        main_table=souped_data.findAll('table',attrs={'class':'table table-condensed table-hover'})[0]
-        #print(main_table)
-        for tds in main_table.find_all('tr',{'class':'unique'}):
-            for td in (tds.find_all("td")):
-                titles.append(td.getText())
-                #print(td.getText())
-    headers=list(filter(lambda x: x!="S.N.",titles))
+    """Fetch the headers from the table on the floor sheet page."""
+    res = requests.get(url).text
+    souped_data = BeautifulSoup(res, 'html5lib')
+    main_table = souped_data.find_all('table', attrs={'class': 'table table__lg table-striped table__border table__border--bottom'})[0]
+    
+    headers = []
+    for th in main_table.find('thead').find_all('th'):
+        headers.append(th.getText().strip())
+    
+    # Clean up headers if needed (remove empty or unwanted columns)
+    headers = list(filter(lambda x: x != "", headers))
     return headers
 
-
 def scrap():
+    """Scrape the floor sheet data."""
+    for page_indexing in range(1):  # You can adjust the range to loop through multiple pages if required.
+        res = requests.get(url).content.decode('utf-8')
+        souped_data = BeautifulSoup(res, 'html.parser')
+        main_table = souped_data.find_all('table', {'class': 'table table__lg table-striped table__border table__border--bottom'})[0]
+        
+        # Extract table rows and scrape data
+        for trs in main_table.find_all('tr')[1:]:  # Skipping the first row which is the header
+            try:
+                vals = trs.find_all('td')
+                
+                SN.append(vals[0].getText().strip())
+                contract_no.append(vals[1].getText().strip())
+                stock_symbol.append(vals[2].getText().strip())
+                buyer.append(vals[3].getText().strip())
+                seller.append(vals[4].getText().strip())
+                quantity.append(vals[5].getText().strip())
+                rate.append(vals[6].getText().strip())
+                amount.append(vals[7].getText().strip())
+                
+                print(f'{Fore.GREEN}{Style.BRIGHT}[-]  {Fore.WHITE}{Style.BRIGHT}Stock Symbol: {vals[2].getText()}')
+            except IndexError:
+                break  # Stop if there's an issue parsing rows
 
-    with open('metadata.json','r') as metadata:
-        jsondata=json.loads(metadata.read())
-    name=jsondata["name"]
-    author=jsondata["author"]
-    linkedin=jsondata["linkedin"]
-    infos=[name,author,linkedin]
-    count=0
-    for cred in jsondata:
-        print(f'{Style.BRIGHT}{cred}: {Fore.YELLOW}{infos[count]}{Fore.RESET}')
-        count+=1
-    time.sleep(1)
-    for page_indexing in range(12):
-        to_skip=0
-        vals=[]
-        res=requests.get(f'{url}{page_indexing+1}').content.decode('utf-8')
-        souped_data=BeautifulSoup(res,'html.parser')
-        main_table=souped_data.find_all('table',{'class':'table table-condensed table-hover'})[0]
-        for trs in main_table.find_all('tr'):
-            if to_skip<2:
-                to_skip+=1
-                continue
-            else:
-                try:
-                    vals=trs.find_all('td')
-                    #SN.append(vals[0].getText())
-                    traded_comp.append(vals[1].getText())
-                    print(f'{Fore.GREEN}{Style.BRIGHT}[-]  {Fore.WHITE}{Style.BRIGHT}{vals[1].getText()}')
-                    no_of_trans.append(vals[2].getText())
-                    max_price.append(vals[3].getText())
-                    min_price.append(vals[4].getText())
-                    closing_price.append(vals[5].getText())
-                    traded_shares.append(vals[6].getText())
-                    amount.append(vals[7].getText())
-                    prev_closing.append(vals[8].getText())
-                    difference.append(vals[9].getText())
-                except IndexError:
-                    break
-
-def createCSV(file_name:str):
-
-    titles=pd_columns()
-    df=pd.DataFrame(columns=titles)
-    df["Traded Companies"]=traded_comp
-    df["No. Of Transaction"]=no_of_trans
-    df["Max Price"]=max_price
-    df["Min Price"]=min_price
-    df["Closing Price"]=closing_price
-    df["Traded Shares"]=traded_shares
-    df["Amount"]=amount
-    df["Previous Closing"]=prev_closing
-    df["Difference Rs."]=difference
-    decode_unicode=df['Difference Rs.'].str.split().str.join(' ')
-    df["Difference Rs."]=decode_unicode
-    df.drop(df.filter(regex="Unname"),axis=1, inplace=True)
-    df.to_csv(f"{file_name}.csv",index=False)
-    print(f" saved your file under {Fore.RED}{Style.BRIGHT}{file_name}.csv ")
-
-
-if  __name__=="__main__":
-
-    scrap()
-    yes_or_no=input("Do you want to save your file (y/n):  ")
+def createCSV(file_name: str):
+    """Create CSV file from scraped data."""
+    titles = pd_columns()
+    df = pd.DataFrame(columns=titles)
     
-    if yes_or_no.lower()=="y":
-        file_name=input("Enter your file name: ")
+    df["SN"] = SN
+    df["Contract No."] = contract_no
+    df["Stock Symbol"] = stock_symbol
+    df["Buyer"] = buyer
+    df["Seller"] = seller
+    df["Quantity"] = quantity
+    df["Rate (Rs)"] = rate
+    df["Amount (Rs)"] = amount
+    
+    df.to_csv(f"{file_name}.csv", index=False)
+    print(f"File saved as {Fore.RED}{Style.BRIGHT}{file_name}.csv")
+
+if __name__ == "__main__":
+    scrap()
+    
+    yes_or_no = input("Do you want to save your file (y/n):  ")
+    
+    if yes_or_no.lower() == "y":
+        file_name = input("Enter your file name: ")
         createCSV(file_name)
-           
     else:
-        print("Okay exiting...")
+        print("Okay, exiting...")
         exit()
