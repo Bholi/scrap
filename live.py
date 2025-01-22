@@ -16,7 +16,7 @@ def fetch_nepse_data(max_retries=3):
     }
 
     # API endpoint URL
-    url = 'https://nepalstock.com/api/nots/live-market/live'
+    url = 'https://nepalstock.com/live-market'
 
     for attempt in range(max_retries):
         try:
