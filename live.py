@@ -1,13 +1,35 @@
 import requests
+import warnings
 from bs4 import BeautifulSoup
 import csv
 import time
 
+# Suppress SSL verification warnings for testing purposes
+warnings.filterwarnings('ignore', category=requests.exceptions.InsecureRequestWarning)
+
+def get_with_retries(url, retries=3, delay=5):
+    for attempt in range(retries):
+        try:
+            # Send an HTTP GET request to the URL, disable SSL verification for testing
+            response = requests.get(url, verify=False, timeout=10)
+            response.raise_for_status()  # Raise an exception for HTTP errors
+            return response
+        except requests.exceptions.RequestException as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+            if attempt < retries - 1:
+                print(f"Retrying in {delay} seconds...")
+                time.sleep(delay)
+            else:
+                print("All attempts failed.")
+                return None
+
 def scrape_nepalstock_floor_sheet(url):
     try:
-        # Send an HTTP GET request to the URL, disable SSL verification for debugging
-        response = requests.get(url, verify=False, timeout=10)
-        response.raise_for_status()  # Raise an exception for HTTP errors
+        # Get the webpage with retries
+        response = get_with_retries(url)
+        if not response:
+            print("Failed to fetch the URL after retries.")
+            return None
         
         # Parse the webpage content
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -46,9 +68,6 @@ def scrape_nepalstock_floor_sheet(url):
         print(f"Data successfully scraped and saved to '{filename}'.")
         return filename
     
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching the URL: {e}")
-        return None
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         return None
