@@ -1,88 +1,112 @@
 import logging
-import subprocess
-import sys
-import traceback
+import os
+import tempfile
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from bs4 import BeautifulSoup
+import csv
+import time
 
 logging.basicConfig(
     level=logging.DEBUG, 
     format='%(asctime)s - %(levelname)s: %(message)s',
-    filename='webdriver_diagnosis.log'
+    filename='nepse_scraper_debug.log'
 )
-
-def run_system_checks():
-    try:
-        # Check Chrome version
-        chrome_version = subprocess.check_output(['google-chrome', '--version']).decode('utf-8').strip()
-        logging.info(f"Chrome Version: {chrome_version}")
-
-        # Check ChromeDriver version
-        chromedriver_version = subprocess.check_output(['chromedriver', '--version']).decode('utf-8').strip()
-        logging.info(f"ChromeDriver Version: {chromedriver_version}")
-
-        # Check system architecture
-        arch_output = subprocess.check_output(['uname', '-m']).decode('utf-8').strip()
-        logging.info(f"System Architecture: {arch_output}")
-    except Exception as e:
-        logging.error(f"System check error: {e}")
 
 def setup_driver():
     try:
+        # Create a unique temporary directory for Chrome user data
+        user_data_dir = tempfile.mkdtemp(prefix='chrome_profile_')
+        
         chrome_options = Options()
+        chrome_options.add_argument(f"user-data-dir={user_data_dir}")
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--verbose")
-        chrome_options.add_argument("--log-level=3")
-
-        # Try different service configurations
-        service_paths = [
-            '/usr/local/bin/chromedriver',
-            '/usr/bin/chromedriver',
-            subprocess.check_output(['which', 'chromedriver']).decode('utf-8').strip()
-        ]
-
-        last_exception = None
-        for driver_path in service_paths:
-            try:
-                service = Service(executable_path=driver_path)
-                driver = webdriver.Chrome(service=service, options=chrome_options)
-                logging.info(f"Successfully created driver using path: {driver_path}")
-                return driver
-            except Exception as e:
-                logging.error(f"Failed with path {driver_path}: {e}")
-                last_exception = e
-
-        raise last_exception if last_exception else Exception("No valid ChromeDriver path found")
-
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--remote-debugging-port=9222")
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        
+        service = Service('/usr/local/bin/chromedriver')
+        
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        return driver, user_data_dir
     except Exception as e:
-        logging.error(f"Comprehensive driver setup error: {e}")
-        logging.error(traceback.format_exc())
+        logging.error(f"Driver setup failed: {e}")
         raise
 
-def main():
-    run_system_checks()
+def scrape_nepse_data():
+    driver = None
+    user_data_dir = None
     
     try:
-        driver = setup_driver()
-        driver.get('https://nepalstock.com/live-market')
+        # Setup driver with unique profile
+        driver, user_data_dir = setup_driver()
         
-        # Extended diagnostic information
-        logging.info(f"Current URL: {driver.current_url}")
-        logging.info(f"Page Title: {driver.title}")
+        # Open the webpage
+        url = 'https://nepalstock.com/live-market'
+        driver.get(url)
         
-        # Save page source for inspection
-        with open('debug_page_source.html', 'w', encoding='utf-8') as f:
-            f.write(driver.page_source)
+        # Extended wait
+        time.sleep(10)
         
-        driver.quit()
+        # Capture page source
+        page_source = driver.page_source
+        logging.info(f"Page source length: {len(page_source)}")
+        
+        # Parse with BeautifulSoup
+        soup = BeautifulSoup(page_source, 'html.parser')
+        
+        # Find tables
+        tables = soup.find_all('table')
+        logging.info(f"Found {len(tables)} tables")
+        
+        if not tables:
+            logging.warning("No tables found in page source")
+            return False
+        
+        # Extract data from first table
+        first_table = tables[0]
+        headers = [th.text.strip() for th in first_table.find_all('th')]
+        rows = []
+        for tr in first_table.find_all('tr')[1:]:  # Skip header row
+            row_data = [td.text.strip() for td in tr.find_all('td')]
+            if row_data:
+                rows.append(row_data)
+        
+        if not rows:
+            logging.warning("No data rows found")
+            return False
+        
+        # Save to CSV
+        output_dir = 'nepse_data'
+        os.makedirs(output_dir, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = os.path.join(output_dir, f'nepal_stock_data_{timestamp}.csv')
+        
+        with open(filename, 'w', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            writer.writerow(headers)
+            writer.writerows(rows)
+        
+        logging.info(f"Data successfully scraped and saved to '{filename}'")
+        return True
+        
     except Exception as e:
-        logging.critical(f"Diagnosis failed: {e}")
-        logging.critical(traceback.format_exc())
+        logging.error(f"Scraping error: {e}")
+        return False
+    finally:
+        # Close driver and clean up temporary profile directory
+        if driver:
+            driver.quit()
+        if user_data_dir and os.path.exists(user_data_dir):
+            import shutil
+            shutil.rmtree(user_data_dir)
 
 if __name__ == "__main__":
-    main()
+    scrape_nepse_data()
