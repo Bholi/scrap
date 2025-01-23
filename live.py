@@ -1,83 +1,112 @@
-import undetected_chromedriver as uc
-import logging
-import os
+from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import csv
 import time
 
-logging.basicConfig(
-    level=logging.DEBUG, 
-    format='%(asctime)s - %(levelname)s: %(message)s',
-    filename='nepse_scraper_debug.log'
-)
+def scrape_nepse_data_with_playwright(max_retries=3, wait_time=30):
+    for attempt in range(max_retries):
+        print(f"Attempt {attempt + 1} of {max_retries}")
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)  # Launch in headless mode
+                context = browser.new_context(
+                    viewport={"width": 1920, "height": 1080},
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )
+                page = context.new_page()
 
-def setup_driver():
-    try:
-        options = uc.ChromeOptions()
-        options.add_argument('--headless')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
+                # Open the webpage
+                url = 'https://nepalstock.com/live-market'
+                page.goto(url)
+
+                # Wait for the page and the table to load
+                page.wait_for_timeout(5000)  # Initial wait for page load
+                
+                table_selectors = [
+                    "table.table",
+                    "table.table__border",
+                    ".table-responsive table"
+                ]
+                table_found = False
+                for selector in table_selectors:
+                    try:
+                        page.wait_for_selector(selector, timeout=wait_time * 1000)
+                        table_found = True
+                        print(f"Table found using selector: {selector}")
+                        break
+                    except Exception:
+                        continue
+                
+                if not table_found:
+                    print("Could not find table with any selector")
+                    continue
+
+                # Get page source and parse
+                page_content = page.content()
+                soup = BeautifulSoup(page_content, 'html.parser')
+
+                # Try multiple possible table classes
+                table = None
+                possible_classes = [
+                    'table table__border table__lg table-striped table__border--bottom table-head-fixed',
+                    'table',
+                    'table table-striped'
+                ]
+                for class_name in possible_classes:
+                    table = soup.find('table', class_=class_name)
+                    if table:
+                        break
+
+                if not table:
+                    print("Table not found in the HTML")
+                    continue
+
+                # Extract headers
+                headers = []
+                header_row = table.find('thead')
+                if header_row:
+                    headers = [th.text.strip() for th in header_row.find_all('th')]
+
+                if not headers:
+                    print("No headers found")
+                    continue
+
+                # Extract rows
+                tbody = table.find('tbody')
+                if not tbody:
+                    print("No table body found")
+                    continue
+
+                rows = []
+                for tr in tbody.find_all('tr'):
+                    row_data = [td.text.strip() for td in tr.find_all('td')]
+                    if row_data:  # Only add non-empty rows
+                        rows.append(row_data)
+
+                if not rows:
+                    print("No data rows found")
+                    continue
+
+                # Save to CSV
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                filename = f'nepal_stock_data_{timestamp}.csv'
+
+                with open(filename, 'w', newline='', encoding='utf-8') as file:
+                    writer = csv.writer(file)
+                    writer.writerow(headers)
+                    writer.writerows(rows)
+
+                print(f"Data successfully scraped and saved to '{filename}'")
+                return True
+
+        except Exception as e:
+            print(f"Unexpected error: {str(e)}")
         
-        driver = uc.Chrome(options=options)
-        return driver
-    except Exception as e:
-        logging.error(f"Driver setup failed: {e}")
-        raise
-
-def scrape_nepse_data():
-    driver = None
+        print(f"Attempt {attempt + 1} failed. Waiting before retry...")
+        time.sleep(5)
     
-    try:
-        driver = setup_driver()
-        
-        url = 'https://nepalstock.com/live-market'
-        driver.get(url)
-        
-        time.sleep(10)
-        
-        page_source = driver.page_source
-        logging.info(f"Page source length: {len(page_source)}")
-        
-        soup = BeautifulSoup(page_source, 'html.parser')
-        
-        tables = soup.find_all('table')
-        logging.info(f"Found {len(tables)} tables")
-        
-        if not tables:
-            logging.warning("No tables found in page source")
-            return False
-        
-        first_table = tables[0]
-        headers = [th.text.strip() for th in first_table.find_all('th')]
-        rows = []
-        for tr in first_table.find_all('tr')[1:]:
-            row_data = [td.text.strip() for td in tr.find_all('td')]
-            if row_data:
-                rows.append(row_data)
-        
-        if not rows:
-            logging.warning("No data rows found")
-            return False
-        
-        output_dir = 'nepse_data'
-        os.makedirs(output_dir, exist_ok=True)
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = os.path.join(output_dir, f'nepal_stock_data_{timestamp}.csv')
-        
-        with open(filename, 'w', newline='', encoding='utf-8') as file:
-            writer = csv.writer(file)
-            writer.writerow(headers)
-            writer.writerows(rows)
-        
-        logging.info(f"Data successfully scraped and saved to '{filename}'")
-        return True
-        
-    except Exception as e:
-        logging.error(f"Scraping error: {e}")
-        return False
-    finally:
-        if driver:
-            driver.quit()
+    print("All attempts failed")
+    return False
 
 if __name__ == "__main__":
-    scrape_nepse_data()
+    scrape_nepse_data_with_playwright()
