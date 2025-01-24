@@ -7,17 +7,29 @@ from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 import logging
 
 logger = logging.getLogger(__name__)
 
 def floorsheet_scraper():
     """
-    Scrape floorsheet data from NEPSE and save it to a CSV file.
+    Scrape floorsheet data from NEPSE and save it to a CSV file in headless mode.
     Automatically stops when scraping is complete for the day.
     """
     url = "https://www.nepalstock.com/floor-sheet"
-    driver = webdriver.Chrome()  # Assumes chromedriver is in PATH
+    
+    # Configure Chrome options for headless mode
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")  # Run in headless mode
+    chrome_options.add_argument("--disable-gpu")  # Disable GPU (Windows-specific)
+    chrome_options.add_argument("--no-sandbox")  # Required for running as root on some systems
+    chrome_options.add_argument("--disable-dev-shm-usage")  # Overcome limited resource problems
+    chrome_options.add_argument("--window-size=1920x1080")  # Set window size for headless mode
+
+    # Initialize the WebDriver with options
+    driver = webdriver.Chrome(service=Service(), options=chrome_options)
 
     # CSV file setup
     csv_filename = f"floorsheet_data_{datetime.now().strftime('%Y%m%d')}.csv"
