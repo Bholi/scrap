@@ -1,4 +1,6 @@
 import logging
+import tempfile
+import time
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -12,6 +14,11 @@ logging.basicConfig(
 
 # Configure Chrome options
 def get_chrome_options():
+    # Create a temporary directory with a unique timestamp
+    user_data_dir = tempfile.mkdtemp(prefix=f"chrome_profile_{int(time.time())}_")
+
+    logging.debug(f"Using unique user data directory: {user_data_dir}")
+
     options = Options()
     options.add_argument("--headless")  # Run in headless mode
     options.add_argument("--no-sandbox")  # Required for running as root in Docker or Linux
@@ -19,7 +26,7 @@ def get_chrome_options():
     options.add_argument("--disable-gpu")  # Disable GPU
     options.add_argument("--remote-debugging-port=9222")  # Enable debugging
     options.add_argument("--window-size=1920,1080")  # Set consistent window size
-    options.add_argument("--user-data-dir=/tmp/unique-chrome-profile")  # Use a unique user-data directory
+    options.add_argument(f"--user-data-dir={user_data_dir}")  # Use the unique user-data directory
     options.add_argument(
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     )
