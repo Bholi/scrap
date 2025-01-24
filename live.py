@@ -7,7 +7,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, WebDriverException, NoSuchElementException
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -20,6 +20,7 @@ def floorsheet_scraper():
     """
     url = "https://www.nepalstock.com/floor-sheet"
     output_file = "floorsheet_data.csv"
+    driver = None
 
     # Set up headless Chrome
     chrome_options = webdriver.ChromeOptions()
@@ -35,6 +36,9 @@ def floorsheet_scraper():
         # Initialize the browser
         logger.debug("Initializing the browser...")
         driver = webdriver.Chrome(options=chrome_options)
+        
+        # Set an explicit timeout for the driver
+        driver.set_page_load_timeout(60)
 
         # Load the page
         logger.info("Loading the NEPSE Floorsheet page...")
@@ -104,10 +108,14 @@ def floorsheet_scraper():
 
     except TimeoutException:
         logger.error("Page took too long to load. Exiting.")
+    except WebDriverException as e:
+        logger.error(f"WebDriver error occurred: {e}")
     except Exception as e:
         logger.error(f"An error occurred: {e}")
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
+        logger.info("Browser closed.")
 
 if __name__ == "__main__":
     floorsheet_scraper()
