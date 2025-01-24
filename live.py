@@ -1,112 +1,89 @@
-from playwright.sync_api import sync_playwright
-from bs4 import BeautifulSoup
-import csv
 import time
+import csv
+from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import Select
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+import logging
 
-def scrape_nepse_data_with_playwright(max_retries=3, wait_time=30):
-    for attempt in range(max_retries):
-        print(f"Attempt {attempt + 1} of {max_retries}")
+logger = logging.getLogger(__name__)
+
+def floorsheet_scraper():
+    """
+    Scrape floorsheet data from NEPSE and save it to a CSV file.
+    Automatically stops when scraping is complete for the day.
+    """
+    url = "https://www.nepalstock.com/floor-sheet"
+    driver = webdriver.Chrome()  # Assumes chromedriver is in PATH
+
+    # CSV file setup
+    csv_filename = f"floorsheet_data_{datetime.now().strftime('%Y%m%d')}.csv"
+    with open(csv_filename, mode='w', newline='', encoding='utf-8') as csvfile:
+        fieldnames = ['transaction_no', 'symbol', 'buyer', 'seller', 'quantity', 'rate', 'amount', 'date']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()  # Write CSV header
+
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)  # Launch in headless mode
-                context = browser.new_context(
-                    viewport={"width": 1920, "height": 1080},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                )
-                page = context.new_page()
+            # Load the page
+            print("Loading the NEPSE Floorsheet page...")
+            driver.get(url)
+            time.sleep(5)  # Wait for the page to load
 
-                # Open the webpage
-                url = 'https://nepalstock.com/live-market'
-                page.goto(url)
+            # Scrape the date
+            date_element = driver.find_element(By.CSS_SELECTOR, 'div.table__asofdate span')
+            date_text = date_element.text.replace("As of", "").strip()
+            scrape_date = datetime.strptime(date_text, "%b %d, %Y, %I:%M:%S %p").date()
+            print(f"Scraped Date: {scrape_date}")
 
-                # Wait for the page and the table to load
-                page.wait_for_timeout(5000)  # Initial wait for page load
-                
-                table_selectors = [
-                    "table.table",
-                    "table.table__border",
-                    ".table-responsive table"
-                ]
-                table_found = False
-                for selector in table_selectors:
-                    try:
-                        page.wait_for_selector(selector, timeout=wait_time * 1000)
-                        table_found = True
-                        print(f"Table found using selector: {selector}")
-                        break
-                    except Exception:
-                        continue
-                
-                if not table_found:
-                    print("Could not find table with any selector")
-                    continue
+            # Select 500 records per page
+            wait = WebDriverWait(driver, 10)  # Maximum wait time of 10 seconds
+            select_element = wait.until(EC.presence_of_element_located((By.TAG_NAME, 'select')))
+            select_dropdown = Select(select_element)
+            select_dropdown.select_by_value('500')
 
-                # Get page source and parse
-                page_content = page.content()
-                soup = BeautifulSoup(page_content, 'html.parser')
+            # Click the Filter button
+            filter_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'button.box__filter--search')))
+            filter_button.click()
+            time.sleep(5)  # Wait for the data to load
 
-                # Try multiple possible table classes
-                table = None
-                possible_classes = [
-                    'table table__border table__lg table-striped table__border--bottom table-head-fixed',
-                    'table',
-                    'table table-striped'
-                ]
-                for class_name in possible_classes:
-                    table = soup.find('table', class_=class_name)
-                    if table:
-                        break
+            # Scrape table data page by page
+            while True:
+                rows = driver.find_elements(By.CSS_SELECTOR, 'table.table__lg tbody tr')
+                print(f"Found {len(rows)} rows on this page.")
 
-                if not table:
-                    print("Table not found in the HTML")
-                    continue
+                for row in rows:
+                    cells = row.find_elements(By.TAG_NAME, 'td')
+                    if len(cells) >= 7:  # Ensure row has enough data
+                        data = {
+                            'transaction_no': cells[1].text.strip(),
+                            'symbol': cells[2].text.strip(),
+                            'buyer': cells[3].text.strip(),
+                            'seller': cells[4].text.strip(),
+                            'quantity': cells[5].text.strip(),
+                            'rate': cells[6].text.strip(),
+                            'amount': cells[7].text.strip(),
+                            'date': scrape_date
+                        }
+                        writer.writerow(data)  # Write data to CSV file
 
-                # Extract headers
-                headers = []
-                header_row = table.find('thead')
-                if header_row:
-                    headers = [th.text.strip() for th in header_row.find_all('th')]
+                # Check for pagination (Next button)
+                try:
+                    next_button = driver.find_element(By.XPATH, "//a[@aria-label='Next page']")
+                    if 'disabled' in next_button.get_attribute('class'):
+                        break  # Exit loop if 'Next' is disabled
+                    next_button.click()
+                    time.sleep(2)  # Wait for the next page to load
+                except NoSuchElementException:
+                    break
 
-                if not headers:
-                    print("No headers found")
-                    continue
+            print(f"Successfully scraped and saved floorsheet data to {csv_filename}.")
 
-                # Extract rows
-                tbody = table.find('tbody')
-                if not tbody:
-                    print("No table body found")
-                    continue
-
-                rows = []
-                for tr in tbody.find_all('tr'):
-                    row_data = [td.text.strip() for td in tr.find_all('td')]
-                    if row_data:  # Only add non-empty rows
-                        rows.append(row_data)
-
-                if not rows:
-                    print("No data rows found")
-                    continue
-
-                # Save to CSV
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f'nepal_stock_data_{timestamp}.csv'
-
-                with open(filename, 'w', newline='', encoding='utf-8') as file:
-                    writer = csv.writer(file)
-                    writer.writerow(headers)
-                    writer.writerows(rows)
-
-                print(f"Data successfully scraped and saved to '{filename}'")
-                return True
-
+        except TimeoutException:
+            print("Page took too long to load. Exiting.")
         except Exception as e:
-            print(f"Unexpected error: {str(e)}")
-        
-        print(f"Attempt {attempt + 1} failed. Waiting before retry...")
-        time.sleep(5)
-    
-    print("All attempts failed")
-    return False
-
-if __name__ == "__main__":
-    scrape_nepse_data_with_playwright()
+            print(f"An error occurred: {e}")
+        finally:
+            driver.quit()
