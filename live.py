@@ -24,12 +24,14 @@ def floorsheet_scraper():
 
     # Set up Chrome options
     chrome_options = webdriver.ChromeOptions()
-    chrome_options.add_argument("--headless")  # Headless mode for browser efficiency
+    chrome_options.add_argument("--headless")  # Keep it headless for background execution
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")  # Disable GPU for performance
     chrome_options.add_argument("--window-size=1920x1080")
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")  # Set user-agent
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+    # Optional: To debug by running without headless mode
+    # chrome_options.headless = False  # Uncomment this line to see the browser visually during scraping
 
     logger.info("Starting the scraper...")
 
@@ -39,7 +41,7 @@ def floorsheet_scraper():
         driver = webdriver.Chrome(options=chrome_options)
         
         # Set an explicit timeout for the driver
-        driver.set_page_load_timeout(120)
+        driver.set_page_load_timeout(180)  # Increased timeout (3 minutes)
 
         # Load the page
         logger.info("Loading the NEPSE Floorsheet page...")
